@@ -3,15 +3,44 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from scipy.stats import lognorm
-from pathlib import Path
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 import yaml as _yaml
 from scipy.spatial import ConvexHull
 from numba import njit
-import itertools
+from configparser import ConfigParser
 
+#  config.ini file
+config = ConfigParser()
+file = "config.ini"
+config.read(file)
+#  config parameter
+epsilon = float(config["PARAMETERS"]["epsilon"])
+min_sample = int(config["PARAMETERS"]["min_sample"])
+frame_time = float(config["PARAMETERS"]["frame_time"])
+min_cluster_events = int(config["PARAMETERS"]["min_cluster_events"])
+create_cluster = config["PARAMETERS"]["create_cluster"]
+# filter parameter
+locs = config["PARAMETERS"]["locs"]
+locs = locs.split(",")
+meanframe = config["PARAMETERS"]["meanframe"]
+meanframe = meanframe.split(",")
+stdframe = config["PARAMETERS"]["stdframe"]
+stdframe = stdframe.split(",")
+meandark = config["PARAMETERS"]["meandark"]
+meandark = meandark.split(",")
+stddark = config["PARAMETERS"]["stddark"]
+stddark = stddark.split(",")
+
+# result path parameter
+path_results = config["PARAMETERS"]["path_results"]
+filename = config["PARAMETERS"]["filename"]
+path_yaml = config["PARAMETERS"]["path_yaml"]
+# load _dblucster.hdf5 files
+path = config["INPUT_FILES"]["path"]
+
+
+sdf=1
 
 class ClusterAnalyzer(object):
     """ loads .hdf5 files from path.
@@ -95,20 +124,6 @@ class ClusterAnalyzer(object):
         rev_counts = counts[counts == False]  # reverse series
         rev_counts_index = rev_counts.index  # get index
         self.dbscan_cluster = self.dbscan_cluster[~self.dbscan_cluster['group'].isin(rev_counts_index)]  # bool filter
-
-        # for i in self.groups:
-        #     # count number of group values
-        #     counts = self.dbscan_cluster['group'].value_counts() > self.min_cluster_events
-        #     rev_counts = counts[counts==False]
-        #     #rev_counts = rev_counts.sort_index()
-        #     rev_counts_index = rev_counts.index
-        #
-        #     self.dbscan_cluster = self.dbscan_cluster[~self.dbscan_cluster['group'].isin(rev_counts_index)]
-        #
-        #     #v = [x for x in self.dbscan_cluster.loc[self.dbscan_cluster['group'] == i] if len(self.dbscan_cluster.loc[self.dbscan_cluster['group'] == i]) < self.min_cluster_events]  # remove cluster with n_points < min_sample
-        #     # if len(self.dbscan_cluster.loc[self.dbscan_cluster['group'] == i]) < self.min_cluster_events:
-        #     #     self.dbscan_cluster = self.dbscan_cluster.drop(self.dbscan_cluster[self.dbscan_cluster['group']
-        #     #                                                                        == i].index)  # drop rows
         self.groups = np.sort(self.dbscan_cluster["group"].unique())  # update groups list after filtering
 
 
@@ -160,11 +175,7 @@ class ClusterAnalyzer(object):
     def calc_clusterprops(self):
         """calculate properties (mean/std, dark_times) for every cluster in dataset"""
         dark_mean, dark_std, row, events = [], [], [], []  # preallocate
-        row_means = []
-        row_stds = []
-        # groups = np.sort(self.dbscan_cluster["group"].unique())
         arr = []
-        # arr = np.zeros((len(self.groups), len(self.column_lst)))  # preallocate matrix with zeros
         for i, k in enumerate(self.groups):  # append mean/std data to dataframe
             temp = self.dbscan_cluster.loc[self.dbscan_cluster['group'] == k]
             temp = temp.sort_values(by=['frame'])  # only for oligomers important
@@ -172,24 +183,19 @@ class ClusterAnalyzer(object):
             self.rolling_win_filter(dark, k)
             merged = np.array([[i, j] for i, j in zip(temp.mean(), temp.std())]).ravel()
             arr.append(merged)
-
-            # for j in self.dbscan_cluster.columns.values.tolist():
-            #     #row.append((temp[j].mean()))
-            #     row.append(self.calc_mean(temp[j].to_numpy()))
-            #     #row.append((temp[j].std()))
-            #     row.append(self.calc_std(temp[j].to_numpy()))
-            #arr.append(row2)
-
             x = dark[~np.isnan(dark)]
             dark_mean.append(self.calc_mean(x.to_numpy()))  # calc mean and std using numba njit
             dark_std.append(self.calc_std(x.to_numpy()))
             events.append(len(temp))
-            #row = []
         self.cluster_props = pd.DataFrame(columns=self.column_lst, data=arr)
         self.cluster_props["dark_mean"] = dark_mean
+        self.cluster_props["dark_mean"] = self.cluster_props["dark_mean"].astype(float)
         self.cluster_props["dark_std"] = dark_std
+        self.cluster_props["dark_std"] = self.cluster_props["dark_std"].astype(float)
         self.cluster_props["n_events"] = events
+        self.cluster_props["n_events"] = self.cluster_props["n_events"].astype(int)
         self.cluster_props["area"] = self.conv_hull_area
+        self.cluster_props["area"] = self.cluster_props["area"].astype(float)
 
     def calc_mean(self, x):
         return _calc_mean(x)
@@ -205,15 +211,15 @@ class ClusterAnalyzer(object):
         """filter dataset"""
         # self.cluster_props = self.cluster_props.loc[(self.cluster_props['inverse_dark [s]'] < 0.5)]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['n_events'] > self.locs[0]) & (self.cluster_props['n_events'] < self.locs[1])]
+            (self.cluster_props['n_events'] > int(self.locs[0])) & (self.cluster_props['n_events'] < int(self.locs[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['frame_mean'] > self.meanframe[0]) & (self.cluster_props['frame_mean'] < self.meanframe[1])]
+            (self.cluster_props['frame_mean'] > int(self.meanframe[0])) & (self.cluster_props['frame_mean'] < int(self.meanframe[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['frame_std'] > self.stdframe[0]) & (self.cluster_props['frame_std'] < self.stdframe[1])]
+            (self.cluster_props['frame_std'] > int(self.stdframe[0])) & (self.cluster_props['frame_std'] < int(self.stdframe[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['dark_mean'] > self.meandark[0]) & (self.cluster_props['dark_mean'] < self.meandark[1])]
+            (self.cluster_props['dark_mean'] > int(self.meandark[0])) & (self.cluster_props['dark_mean'] < int(self.meandark[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['dark_std'] > self.stddark[0]) & (self.cluster_props['dark_std'] < self.stddark[1])]
+            (self.cluster_props['dark_std'] > int(self.stddark[0])) & (self.cluster_props['dark_std'] < int(self.stddark[1]))]
         return self.cluster_props
 
     def testplot(self, concat_data, i):
@@ -233,13 +239,14 @@ class ClusterAnalyzer(object):
 
 class Save(object):
     """ Saves new .hdf5 files, corresponding .yaml file and .xlsm containing ROI coordinates"""
-    def __init__(self, path, filename, data, epsilon, min_sample, column_lst):
+    def __init__(self, path, filename, data, epsilon, min_sample, column_lst, i):
         self.path = path
         self.filename = filename
         self.data = data
         self.epsilon = epsilon
         self.min_sample = min_sample
         self.column_lst = column_lst
+        self.i = i
 
     def getformats(self):
         # get formats of hdf5 files
@@ -258,15 +265,34 @@ class Save(object):
     def save_yaml(self):
         name = self.filename + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) + "_properties" +".yaml"
         content = []
-        path_yaml = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR2b\\ROI\\ROI1.yaml"
-        if "x" == "x":
+        self.yaml_param()
+        # if self.i == 1:
             # save yaml file to reopen modified dbscan file
-            with open(os.path.join(path_yaml), 'r') as yaml_file:
-                text = _yaml.load_all(yaml_file, _yaml.FullLoader)
-                with open(os.path.join(self.path, name), 'w') as outfile:
-                    for doc in text:
-                        content.append(doc)
-                    _yaml.dump_all(content, outfile)
+        with open(os.path.join(path_yaml), 'r') as yaml_file:
+            text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+            with open(os.path.join(self.path, name), 'w') as outfile:
+                for doc in text:
+                    content.append(doc)
+                content.append(self.yaml_content)
+                _yaml.dump_all(content, outfile)
+
+    def yaml_param(self):
+        self.yaml_content = dict(
+            frame_time=frame_time,
+            min_cluster_events=min_cluster_events,
+            create_cluster=create_cluster,
+            DBSCAN=dict(
+                epsilon=epsilon,
+                min_sample=min_sample
+            ),
+            filter_param=dict(
+                locs=locs,
+                meanframe=meanframe,
+                stdframe=stdframe,
+                meandark=meandark,
+                stddark=stddark,
+            )
+        )
 
     def main(self):
         formats = self.getformats()
@@ -302,46 +328,47 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
 
     # obj.testplot(all_cluster_props, i)
-        save_obs = Save(path_results, filename, all_cluster_props, epsilon, min_sample, column_lst)
+        save_obs = Save(path_results, filename, all_cluster_props, epsilon, min_sample, column_lst, i)
         save_obs.main()
     return all_cluster_props, centroids
 
 
 # load file
-path_results = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis"
-# # FcyR2b
-Path_FcyR2b_ROI = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR2b\\ROI"  # path
-Path_FcyR2b_BG = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR2b\\BG"  # path
-Path_FcyR2b_control_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR2b\\Cluster"  # path
+# path_results = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis"
+# # # FcyR2b
+# Path_FcyR2b_ROI = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR2b\\ROI"  # path
+# Path_FcyR2b_BG = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR2b\\BG"  # path
+# Path_FcyR2b_control_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR2b\\Cluster"  # path
 
 # FcyR2b_ROI, FcyR2b_ROI_centroids = main(Path_FcyR2b_ROI, [8, 200], [7500, 12500], [4000, 7000],
 #                        [250, 5000], [100, 2500], 0.25, 10, path_results, "FcyR2b_ROI", 0.05, 8, False)
 # FcyR2b_ROI, FcyR2b_ROI_centroids = main(Path_FcyR2b_ROI, [8, 200], [7500, 12500], [4000, 7000],
 #                        [250, 5000], [100, 2500], 0.25, 10, path_results, "FcyR2b_ROI_dimer", 0.05, 8, True)
 
-# FcyR2b_BG, FcyR2b_ROI_centroids = main(Path_FcyR2b_BG, [8, 200], [5000, 15000], [4000, 7000],
-#                       [250, 25000], [100, 2500], 0.25, 10, path_results, "FcyR2b_BG", 0.05, 8, False)
+FcyR2b_BG, FcyR2b_ROI_centroids = main(path, locs, meanframe, stdframe,
+                      meandark, stddark, epsilon, min_sample, path_results,
+                      filename, frame_time, min_cluster_events, create_cluster)
 # FcyR2b_control, FcyR2b_control_centroids = main(Path_FcyR2b_control_2ndAB, [8, 200], [7500, 12500], [4000, 7000],
 #                        [250, 2500], [100, 2500], 0.25, 10, path_results, "FcyR2b_2nd_AB", 0.05, 8, False)
 
 
 
-# FcyR1a
-Path_FcyR1a_ROI = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR1a\\ROI"  # path
-Path_FcyR1a_BG = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR1a\\BG"  # path
-Path_FcyR1a_ROI_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR1a\\Cluster"  # path
-
-FcyR1a_ROI, XX = main(Path_FcyR1a_ROI, [6, 200], [7500, 12500], [4000, 7000],
-                      [250, 5000], [100, 2500], 0.2, 5, path_results, "FcyR1a_ROI", 0.05, 6, False)
-FcyR1a_ROI, XX = main(Path_FcyR1a_ROI, [6, 200], [7500, 12500], [4000, 7000],
-                      [250, 5000], [100, 2500], 0.2, 5, path_results, "FcyR1a_ROI_dimer", 0.05, 6, True)
-
-FcyR1a_BG, YY = main(Path_FcyR1a_BG, [6, 200], [7500, 12500], [4000, 7000],
-                     [250, 3500], [100, 2500], 0.2, 5, path_results, "FcyR1a_BG", 0.05, 6, False)
+# # FcyR1a
+# Path_FcyR1a_ROI = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR1a\\ROI"  # path
+# Path_FcyR1a_BG = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\Analysis\\FcyR1a\\BG"  # path
+# Path_FcyR1a_ROI_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR1a\\Cluster"  # path
 #
-FcyR1a_ROI, FcyR1a_ROI_centroids = main(Path_FcyR1a_ROI_2ndAB, [6, 200], [7500, 12500], [4000, 7000],
-                       [250, 2500], [100, 2500], 0.2, 5, path_results, "FcyR1a_2nd_AB", 0.05, 6, False)
-Path_FcyR2b_control_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR1a\\Cluster"  # path
+# FcyR1a_ROI, XX = main(Path_FcyR1a_ROI, [6, 200], [7500, 12500], [4000, 7000],
+#                       [250, 5000], [100, 2500], 0.2, 5, path_results, "FcyR1a_ROI", 0.05, 6, False)
+# FcyR1a_ROI, XX = main(Path_FcyR1a_ROI, [6, 200], [7500, 12500], [4000, 7000],
+#                       [250, 5000], [100, 2500], 0.2, 5, path_results, "FcyR1a_ROI_dimer", 0.05, 6, True)
+#
+# FcyR1a_BG, YY = main(Path_FcyR1a_BG, [6, 200], [7500, 12500], [4000, 7000],
+#                      [250, 3500], [100, 2500], 0.2, 5, path_results, "FcyR1a_BG", 0.05, 6, False)
+# #
+# FcyR1a_ROI, FcyR1a_ROI_centroids = main(Path_FcyR1a_ROI_2ndAB, [6, 200], [7500, 12500], [4000, 7000],
+#                        [250, 2500], [100, 2500], 0.2, 5, path_results, "FcyR1a_2nd_AB", 0.05, 6, False)
+# Path_FcyR2b_control_2ndAB = "H:\\Data\\Microscopy\\Leica_TIRF\\18_04_24 DNA PAINT Fc\\control_2nd_ab_only\\FcyR1a\\Cluster"  # path
 
 # fig, axes = plt.subplots(figsize=(15, 6), nrows=2, ncols=2)
 #
