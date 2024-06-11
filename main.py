@@ -35,7 +35,7 @@ stddark = stddark.split(",")
 # result path parameter
 path_results = config["PARAMETERS"]["path_results"]
 filename = config["PARAMETERS"]["filename"]
-path_yaml = config["PARAMETERS"]["path_yaml"]
+# path_yaml = config["PARAMETERS"]["path_yaml"]
 # load _dblucster.hdf5 files
 path = config["INPUT_FILES"]["path"]
 
