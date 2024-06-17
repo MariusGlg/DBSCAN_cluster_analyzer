@@ -73,6 +73,12 @@ class ClusterAnalyzer(object):
             locs = locs_file[str(key)][...]
         self.data_pd = pd.DataFrame(locs)
 
+    # def load_yaml(self):
+    #     with open(os.path.join(self.path, self.file_path + ".yaml"), 'r') as yaml_file:
+    #         text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+    #     self.data_pd = pd.DataFrame(locs)
+
+
     def nearest_neighbors(self):
         """calc nearest neighbor to estimate DBSCAN input parameter. Plot average k-distance on k-distance graph.
         n = MinPts for dataset.
@@ -228,6 +234,7 @@ class ClusterAnalyzer(object):
             (self.cluster_props['dark_mean'] > int(self.meandark[0])) & (self.cluster_props['dark_mean'] < int(self.meandark[1]))]
         self.cluster_props = self.cluster_props.loc[
             (self.cluster_props['dark_std'] > int(self.stddark[0])) & (self.cluster_props['dark_std'] < int(self.stddark[1]))]
+        return self.cluster_props
 
     def save_dbscan_file(self, i):
         """save filtered dbscan file"""
@@ -236,7 +243,7 @@ class ClusterAnalyzer(object):
         self.dbscan_filtered = self.dbscan_cluster.loc[self.dbscan_cluster['group'].isin(self.groups)]
         header = self.dbscan_filtered.head()  # get column name of dbscan_file
         header = list(header)  # list
-        obs_temp = Save(path_results, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
+        obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
         obs_temp.main()
 
 
@@ -257,8 +264,9 @@ class ClusterAnalyzer(object):
 
 class Save(object):
     """ Saves new .hdf5 files, corresponding .yaml file and .xlsm containing ROI coordinates"""
-    def __init__(self, path, filename, data, epsilon, min_sample, column_lst, appendix, i):
-        self.path = path
+    def __init__(self, path_results, path_files, filename, data, epsilon, min_sample, column_lst, appendix, i):
+        self.path_results = path_results
+        self.path_files = path_files
         self.filename = filename
         self.data = data
         self.epsilon = epsilon
@@ -270,6 +278,10 @@ class Save(object):
     def getformats(self):
         """get column formats"""
         formats = ([np.float32] * (len(self.data.columns)))
+        formats[0] = np.uint32
+        formats[11] = np.uint32
+        formats[12] = np.uint32
+        formats[14] = np.uint32
         return formats
 
     def save_pd_to_hdf5(self, formats):
@@ -278,7 +290,7 @@ class Save(object):
         self.fn = self.i.split(".")  # split name
         name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
                 "_" + str(self.appendix) + ".hdf5")
-        with h5py.File(os.path.join(self.path, str(name)), "w") as locs_file:
+        with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
             ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
             locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
 
@@ -288,9 +300,18 @@ class Save(object):
         content = []
         self.yaml_param()  # save parameter in yaml file
 
-        with open(os.path.join(self.path, name), 'w') as outfile:
-            content.append(self.yaml_content)
-            _yaml.dump_all(content, outfile)
+        with open(os.path.join(self.path_files, str(self.fn[0]) + ".yaml"), 'r') as yaml_file:
+            text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+            with open(os.path.join(self.path_results, name), 'w') as outfile:
+                for line in text:
+                    content.append(line)
+                content.append(self.yaml_content)
+                _yaml.dump_all(content, outfile)
+
+        # with open(os.path.join(self.path, name), 'w') as outfile:
+        #     content.append(self.yaml_content)
+        #     _yaml.dump_all(content, outfile)
+        sdf=1
 
     def yaml_param(self):
         """ saves analysis parameter in yaml file"""
@@ -345,7 +366,7 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
 
     # obj.testplot(all_cluster_props, i)
-        save_obs = Save(path_results, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties", i)
+        save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties", i)
         save_obs.main()
     return all_cluster_props, centroids
 
