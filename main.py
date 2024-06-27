@@ -218,7 +218,7 @@ class ClusterAnalyzer(object):
         return _calc_std(x)
 
     def calc_inverse_darktime(self):
-        self.cluster_props["inverse_dark [s]"] = (1 / self.cluster_props["dark_mean"]) * self.frame_time
+        self.cluster_props["inverse_dark [s]"] = 1 / (self.cluster_props["dark_mean"] * self.frame_time)
         return self.cluster_props
 
     def filter(self):
@@ -245,6 +245,7 @@ class ClusterAnalyzer(object):
         header = list(header)  # list
         obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
         obs_temp.main()
+        return self.dbscan_filtered
 
 
     def testplot(self, concat_data, i):
@@ -290,28 +291,47 @@ class Save(object):
         self.fn = self.i.split(".")  # split name
         name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
                 "_" + str(self.appendix) + ".hdf5")
-        with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
-            ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
-            locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
+        if self.appendix == "properties_all":
+            self.fn = self.i.split(".")  # split name
+            self.fn = self.fn[0][:-1]  # remove last char
+            name = (str(self.fn) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                    "_" + str(self.appendix) + ".hdf5")
+            with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
+                ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
+                locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
+        else:
+
+            with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
+                ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
+                locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
 
     def save_yaml(self):
+        """ opens existing yaml file, adds analysis parameters and saves file in new path"""
         name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
                 "_" + str(self.appendix) + ".yaml")
         content = []
         self.yaml_param()  # save parameter in yaml file
-
-        with open(os.path.join(self.path_files, str(self.fn[0]) + ".yaml"), 'r') as yaml_file:
-            text = _yaml.load_all(yaml_file, _yaml.FullLoader)
-            with open(os.path.join(self.path_results, name), 'w') as outfile:
-                for line in text:
-                    content.append(line)
-                content.append(self.yaml_content)
-                _yaml.dump_all(content, outfile)
-
-        # with open(os.path.join(self.path, name), 'w') as outfile:
-        #     content.append(self.yaml_content)
-        #     _yaml.dump_all(content, outfile)
-        sdf=1
+        if self.appendix == "properties_all":  # save yaml file for all cluster prop
+            self.fn2 = self.i.split(".")  # split name
+            self.fn2 = self.fn2[0]
+            with open(os.path.join(self.path_files, str(self.fn2) + ".yaml"), 'r') as yaml_file:
+                text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+                print(self.fn2[:-1])
+                name = (self.fn2[:-1] + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                        "_" + str(self.appendix) + ".yaml")
+                with open(os.path.join(self.path_results, name), 'w') as outfile:
+                    for line in text:
+                        content.append(line)
+                    content.append(self.yaml_content)
+                    _yaml.dump_all(content, outfile)
+        else:
+            with open(os.path.join(self.path_files, str(self.fn[0]) + ".yaml"), 'r') as yaml_file:
+                text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+                with open(os.path.join(self.path_results, name), 'w') as outfile:
+                    for line in text:
+                        content.append(line)
+                    content.append(self.yaml_content)
+                    _yaml.dump_all(content, outfile)
 
     def yaml_param(self):
         """ saves analysis parameter in yaml file"""
@@ -349,6 +369,7 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
 
     all_cluster_props = pd.DataFrame() # init emtpy dataframe
     for i in os.listdir(path):
+        print(i)
         # loop through dir_list and open files
         if i.endswith(".hdf5"):  #== "ROI1.hdf5": #
             obj = ClusterAnalyzer(path + "\\" + i, locs, meanframe, stdframe, meandark, stddark,
@@ -362,12 +383,17 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             obj.calc_clusterprops()
             obj.calc_inverse_darktime()
             cluster_props = obj.filter()
-            obj.save_dbscan_file(i)
+            dbscan_filtered = obj.save_dbscan_file(i)
+            # plt.scatter(x=cluster_props["x_mean"], y=cluster_props["y_mean"], c=cluster_props["area"], cmap="viridis")
+            # plt.show()
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
 
     # obj.testplot(all_cluster_props, i)
-        save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties", i)
+        save_obs = Save(path_results, path, filename, cluster_props, epsilon, min_sample, column_lst, "properties", i)
         save_obs.main()
+    save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties_all", i)
+    save_obs.main()
+    #SAVE ALLCLUSTERPROPS FILE!!!!!
     return all_cluster_props, centroids
 
 
