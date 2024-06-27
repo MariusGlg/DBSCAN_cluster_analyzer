@@ -35,7 +35,7 @@ stddark = stddark.split(",")
 # result path parameter
 path_results = config["PARAMETERS"]["path_results"]
 filename = config["PARAMETERS"]["filename"]
-path_yaml = config["PARAMETERS"]["path_yaml"]
+# path_yaml = config["PARAMETERS"]["path_yaml"]
 # load _dblucster.hdf5 files
 path = config["INPUT_FILES"]["path"]
 
@@ -72,6 +72,12 @@ class ClusterAnalyzer(object):
             key = list(locs_file.keys())[0]  # get key name
             locs = locs_file[str(key)][...]
         self.data_pd = pd.DataFrame(locs)
+
+    # def load_yaml(self):
+    #     with open(os.path.join(self.path, self.file_path + ".yaml"), 'r') as yaml_file:
+    #         text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+    #     self.data_pd = pd.DataFrame(locs)
+
 
     def nearest_neighbors(self):
         """calc nearest neighbor to estimate DBSCAN input parameter. Plot average k-distance on k-distance graph.
@@ -125,6 +131,10 @@ class ClusterAnalyzer(object):
         rev_counts_index = rev_counts.index  # get index
         self.dbscan_cluster = self.dbscan_cluster[~self.dbscan_cluster['group'].isin(rev_counts_index)]  # bool filter
         self.groups = np.sort(self.dbscan_cluster["group"].unique())  # update groups list after filtering
+        # plt.scatter(self.dbscan_cluster["x"], self.dbscan_cluster["y"], marker="o", s=5, c="r")
+        # plt.scatter(self.data_pd["x"], self.data_pd["y"], s=2, marker="+", c="b")
+        # plt.show()
+        sdf=1
 
 
     def artificial_cluster(self):
@@ -137,21 +147,24 @@ class ClusterAnalyzer(object):
             self.groups = np.sort(self.dbscan_cluster["group"].unique())  # update groups list after filtering
 
     def cluster_area(self):
+        """ calc area of clusters and call func to calc cendtroids"""
         self.conv_hull_area = []
         self.centroids = []
-        """ calculate area (convex hull) of dbscan cluster"""
+        #  calculate area (convex hull) of dbscan cluster
         for i in self.groups:  # append mean/std data to dataframe
             temp = self.dbscan_cluster.loc[self.dbscan_cluster['group'] == i]
             hull = ConvexHull(np.stack((temp["x"].to_numpy(), temp["y"].to_numpy()), axis=1))
             self.conv_hull_area.append(hull.area)  # append area
-            cx, cy = self.cluster_center(hull)  # calculate centroid of cluster
+            cx, cy = self.calc_cluster_center(hull)  # calculate centroid of cluster
             self.centroids.append([cx, cy])  # append centroids
         return self.centroids
-    def cluster_center(self, hull):
-        # Get centroid of cluster
+
+    def calc_cluster_center(self, hull):
+        """calculate centroids of clusters"""
         return np.mean(hull.points[hull.vertices, 0]), np.mean(hull.points[hull.vertices, 1])
 
-    def get_formats(self):
+    def make_property_columns(self):
+        """create property file that includes mean and std columns"""
         self.cluster_props_header = self.dbscan_cluster.columns.values.tolist()
         mean_lst = ['{0}_mean'.format(words) for words in self.cluster_props_header]
         std_lst = ['{0}_std'.format(words) for words in self.cluster_props_header]
@@ -205,7 +218,7 @@ class ClusterAnalyzer(object):
         return _calc_std(x)
 
     def calc_inverse_darktime(self):
-        self.cluster_props["inverse_dark [s]"] = (1 / self.cluster_props["dark_mean"]) * self.frame_time
+        self.cluster_props["inverse_dark [s]"] = 1 / (self.cluster_props["dark_mean"] * self.frame_time)
         return self.cluster_props
 
     def filter(self):
@@ -222,6 +235,18 @@ class ClusterAnalyzer(object):
         self.cluster_props = self.cluster_props.loc[
             (self.cluster_props['dark_std'] > int(self.stddark[0])) & (self.cluster_props['dark_std'] < int(self.stddark[1]))]
         return self.cluster_props
+
+    def save_dbscan_file(self, i):
+        """save filtered dbscan file"""
+        self.groups = np.sort(self.cluster_props["group_mean"].unique())
+        self.groups = self.groups.astype(np.int32)
+        self.dbscan_filtered = self.dbscan_cluster.loc[self.dbscan_cluster['group'].isin(self.groups)]
+        header = self.dbscan_filtered.head()  # get column name of dbscan_file
+        header = list(header)  # list
+        obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
+        obs_temp.main()
+        return self.dbscan_filtered
+
 
     def testplot(self, concat_data, i):
         concat_data.hist(column="frame_mean", bins=60)
@@ -240,44 +265,76 @@ class ClusterAnalyzer(object):
 
 class Save(object):
     """ Saves new .hdf5 files, corresponding .yaml file and .xlsm containing ROI coordinates"""
-    def __init__(self, path, filename, data, epsilon, min_sample, column_lst, i):
-        self.path = path
+    def __init__(self, path_results, path_files, filename, data, epsilon, min_sample, column_lst, appendix, i):
+        self.path_results = path_results
+        self.path_files = path_files
         self.filename = filename
         self.data = data
         self.epsilon = epsilon
         self.min_sample = min_sample
         self.column_lst = column_lst
+        self.appendix = appendix
         self.i = i
 
     def getformats(self):
-        # get formats of hdf5 files
+        """get column formats"""
         formats = ([np.float32] * (len(self.data.columns)))
+        formats[0] = np.uint32
+        formats[11] = np.uint32
+        formats[12] = np.uint32
+        formats[14] = np.uint32
         return formats
 
     def save_pd_to_hdf5(self, formats):
         data_lst = self.data.values.tolist()  # convert to list of lists
         data_lst = [tuple(x) for x in data_lst]  # convert to list of tuples
+        self.fn = self.i.split(".")  # split name
+        name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                "_" + str(self.appendix) + ".hdf5")
+        if self.appendix == "properties_all":
+            self.fn = self.i.split(".")  # split name
+            self.fn = self.fn[0][:-1]  # remove last char
+            name = (str(self.fn) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                    "_" + str(self.appendix) + ".hdf5")
+            with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
+                ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
+                locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
+        else:
 
-        name = self.filename + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) + "_properties" +".hdf5"
-        with h5py.File(os.path.join(self.path, str(name)), "w") as locs_file:
-            ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
-            locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
+            with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
+                ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
+                locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
 
     def save_yaml(self):
-        name = self.filename + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) + "_properties" +".yaml"
+        """ opens existing yaml file, adds analysis parameters and saves file in new path"""
+        name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                "_" + str(self.appendix) + ".yaml")
         content = []
-        self.yaml_param()
-        # if self.i == 1:
-            # save yaml file to reopen modified dbscan file
-        with open(os.path.join(path_yaml), 'r') as yaml_file:
-            text = _yaml.load_all(yaml_file, _yaml.FullLoader)
-            with open(os.path.join(self.path, name), 'w') as outfile:
-                for doc in text:
-                    content.append(doc)
-                content.append(self.yaml_content)
-                _yaml.dump_all(content, outfile)
+        self.yaml_param()  # save parameter in yaml file
+        if self.appendix == "properties_all":  # save yaml file for all cluster prop
+            self.fn2 = self.i.split(".")  # split name
+            self.fn2 = self.fn2[0]
+            with open(os.path.join(self.path_files, str(self.fn2) + ".yaml"), 'r') as yaml_file:
+                text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+                print(self.fn2[:-1])
+                name = (self.fn2[:-1] + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
+                        "_" + str(self.appendix) + ".yaml")
+                with open(os.path.join(self.path_results, name), 'w') as outfile:
+                    for line in text:
+                        content.append(line)
+                    content.append(self.yaml_content)
+                    _yaml.dump_all(content, outfile)
+        else:
+            with open(os.path.join(self.path_files, str(self.fn[0]) + ".yaml"), 'r') as yaml_file:
+                text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+                with open(os.path.join(self.path_results, name), 'w') as outfile:
+                    for line in text:
+                        content.append(line)
+                    content.append(self.yaml_content)
+                    _yaml.dump_all(content, outfile)
 
     def yaml_param(self):
+        """ saves analysis parameter in yaml file"""
         self.yaml_content = dict(
             frame_time=frame_time,
             min_cluster_events=min_cluster_events,
@@ -296,6 +353,7 @@ class Save(object):
         )
 
     def main(self):
+        """ main file: calls getformats, save_hdf5 and save_yaml"""
         formats = self.getformats()
         self.save_pd_to_hdf5(formats)
         self.save_yaml()
@@ -311,8 +369,8 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
 
     all_cluster_props = pd.DataFrame() # init emtpy dataframe
     for i in os.listdir(path):
+        print(i)
         # loop through dir_list and open files
-        # print(i)
         if i.endswith(".hdf5"):  #== "ROI1.hdf5": #
             obj = ClusterAnalyzer(path + "\\" + i, locs, meanframe, stdframe, meandark, stddark,
                                   epsilon, min_sample, filename, frame_time, min_cluster_events, create_cluster)
@@ -321,18 +379,21 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             obj.dbscan()
             obj.artificial_cluster()
             centroids = obj.cluster_area()
-            column_lst = obj.get_formats()
+            column_lst = obj.make_property_columns()
             obj.calc_clusterprops()
-            #  dbscan_cluster = []
-            cluster_props = obj.calc_inverse_darktime()
+            obj.calc_inverse_darktime()
             cluster_props = obj.filter()
-            print("n cluster: ", len(cluster_props))
-            print("density: ", cluster_props["n_events"].mean())
+            dbscan_filtered = obj.save_dbscan_file(i)
+            # plt.scatter(x=cluster_props["x_mean"], y=cluster_props["y_mean"], c=cluster_props["area"], cmap="viridis")
+            # plt.show()
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
 
     # obj.testplot(all_cluster_props, i)
-        save_obs = Save(path_results, filename, all_cluster_props, epsilon, min_sample, column_lst, i)
+        save_obs = Save(path_results, path, filename, cluster_props, epsilon, min_sample, column_lst, "properties", i)
         save_obs.main()
+    save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties_all", i)
+    save_obs.main()
+    #SAVE ALLCLUSTERPROPS FILE!!!!!
     return all_cluster_props, centroids
 
 
@@ -359,3 +420,12 @@ Cluster_props, centroids = main(path, locs, meanframe, stdframe,
 #
 # plt.savefig(path_results + "cluter_analysis.png", dpi=300) #  os.path.dirname(root)
 
+
+
+# with open(os.path.join(path_yaml), 'r') as yaml_file:
+        #     text = _yaml.load_all(yaml_file, _yaml.FullLoader)
+        #     with open(os.path.join(self.path, name), 'w') as outfile:
+        #         for doc in text:
+        #             content.append(doc)
+        #         content.append(self.yaml_content)
+        #         _yaml.dump_all(content, outfile)
