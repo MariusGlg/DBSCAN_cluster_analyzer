@@ -18,29 +18,35 @@ config.read(file)
 epsilon = float(config["PARAMETERS"]["epsilon"])
 min_sample = int(config["PARAMETERS"]["min_sample"])
 frame_time = float(config["PARAMETERS"]["frame_time"])
+imager_concentration = float(config["PARAMETERS"]["imager_concentration"])
+n_frames = float(config["PARAMETERS"]["n_frames"])
 min_cluster_events = int(config["PARAMETERS"]["min_cluster_events"])
 create_cluster = config["PARAMETERS"]["create_cluster"]
+filter_traces = config["PARAMETERS"]["filter_traces"]
+show_sticky_traces = config["PARAMETERS"]["filter_traces"]
+nearest_neighbor_ananlysis = config["PARAMETERS"]["nearest_neighbor_analysis"]
+NN_pts = config["PARAMETERS"]["NN_pts"].split(",")
+k_on = config["PARAMETERS"]["k_on"]
+
 # filter parameter
-locs = config["PARAMETERS"]["locs"]
-locs = locs.split(",")
-meanframe = config["PARAMETERS"]["meanframe"]
-meanframe = meanframe.split(",")
-stdframe = config["PARAMETERS"]["stdframe"]
-stdframe = stdframe.split(",")
-meandark = config["PARAMETERS"]["meandark"]
-meandark = meandark.split(",")
-stddark = config["PARAMETERS"]["stddark"]
-stddark = stddark.split(",")
+locs = config["PARAMETERS"]["locs"].split(",")
+meanframe = config["PARAMETERS"]["meanframe"].split(",")
+stdframe = config["PARAMETERS"]["stdframe"].split(",")
+meandark = config["PARAMETERS"]["meandark"].split(",")
+stddark = config["PARAMETERS"]["stddark"].split(",")
 
 # result path parameter
 path_results = config["PARAMETERS"]["path_results"]
 filename = config["PARAMETERS"]["filename"]
-# path_yaml = config["PARAMETERS"]["path_yaml"]
 # load _dblucster.hdf5 files
 path = config["INPUT_FILES"]["path"]
 
-
-sdf=1
+# calc theoretical dark time
+k_on = int(k_on)*10**6
+c = imager_concentration*10**-9
+t = int(n_frames)*frame_time
+e = k_on*c*t
+tau_d_theo = n_frames/e
 
 class ClusterAnalyzer(object):
     """ loads .hdf5 files from path.
@@ -73,35 +79,30 @@ class ClusterAnalyzer(object):
             locs = locs_file[str(key)][...]
         self.data_pd = pd.DataFrame(locs)
 
-    # def load_yaml(self):
-    #     with open(os.path.join(self.path, self.file_path + ".yaml"), 'r') as yaml_file:
-    #         text = _yaml.load_all(yaml_file, _yaml.FullLoader)
-    #     self.data_pd = pd.DataFrame(locs)
-
-
     def nearest_neighbors(self):
-        """calc nearest neighbor to estimate DBSCAN input parameter. Plot average k-distance on k-distance graph.
+        """Unsupervised learner for implementing neighbor searches to estimate DBSCAN input parameter.
+        Plots average k-distance on k-distance graph.
         n = MinPts for dataset.
-        Optimal epsilon = point of maximum curvature (greatest slope)
+        Optimal epsilon == point of maximum curvature (greatest slope)
         """
-        n = [4, 8, 12, 20, 80]  # n_neighbors
-        distance_list = []
-        for i in n:  # loop through list
-            neighbors = NearestNeighbors(n_neighbors=i)
-            neighbors_fit = neighbors.fit(self.data_pd[["x", "y"]])
-            distances, indices = neighbors_fit.kneighbors(self.data_pd[["x", "y"]])
+        if nearest_neighbor_ananlysis == "True":
+            distance_list = []
+            for i in NN_pts:  # loop through list
+                neighbors = NearestNeighbors(n_neighbors=int(i))
+                neighbors_fit = neighbors.fit(self.data_pd[["x", "y"]])
+                distances, indices = neighbors_fit.kneighbors(self.data_pd[["x", "y"]])
 
-            distances = np.mean(distances[:, 1:], axis=1)
-            distances = np.sort(distances)
-            distance_list.append(distances)
+                distances = np.mean(distances[:, 1:], axis=1)
+                distances = np.sort(distances)
+                distance_list.append(distances)
 
-        for i in range(len(distance_list)):
-            plt.plot(distance_list[i], label=n[i])
-            plt.xlabel("Points n (sorted by distance)")
-            plt.ylabel("e (NN-distance)")
-            plt.title("k-distance graph")
-            plt.legend()
-        plt.show()
+            for i in range(len(distance_list)):
+                plt.plot(distance_list[i], label=int(i))
+                plt.xlabel("Points (sorted by distance)")
+                plt.ylabel("NN-distance [px]")
+                plt.title("k-distance graph")
+                plt.legend()
+            plt.show()
 
     def dbscan(self):
         """
@@ -114,32 +115,23 @@ class ClusterAnalyzer(object):
         """
         db = DBSCAN(eps=self.epsilon, min_samples=self.min_sample).fit(self.data_pd[["x", "y"]].to_numpy())  # dbscan
         labels = db.labels_
-        # Number of clusters in labels, ignoring noise if present.
-        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)  # number of clusters
-        # print(n_clusters_)
-        n_noise_ = list(labels).count(-1)  # number of noise locs
         self.data_pd["group"] = labels  # add group column
-        unique_labels = set(labels)  # get unique cluster label
         core_samples_mask = np.zeros_like(labels, dtype=bool)  # preallocate core_sample_mask
         core_samples_mask[db.core_sample_indices_] = True  # core_sample mask
         s = pd.Series(core_samples_mask, name='bools')  # generate series for masking
         self.dbscan_cluster = self.data_pd[s.values]  # mask localization file to extract dbscan cluster
-        self.groups = np.sort(self.dbscan_cluster["group"].unique())  # cluster goups indices
+        self.groups = np.sort(self.dbscan_cluster["group"].unique())  # cluster groups indices
         # filter dbscan cluster based on min_cluster events
         counts = self.dbscan_cluster['group'].value_counts() > self.min_cluster_events  # count events/cluster
         rev_counts = counts[counts == False]  # reverse series
         rev_counts_index = rev_counts.index  # get index
         self.dbscan_cluster = self.dbscan_cluster[~self.dbscan_cluster['group'].isin(rev_counts_index)]  # bool filter
         self.groups = np.sort(self.dbscan_cluster["group"].unique())  # update groups list after filtering
-        # plt.scatter(self.dbscan_cluster["x"], self.dbscan_cluster["y"], marker="o", s=5, c="r")
-        # plt.scatter(self.data_pd["x"], self.data_pd["y"], s=2, marker="+", c="b")
-        # plt.show()
-        sdf=1
 
 
     def artificial_cluster(self):
         """generate larger cluster by assinging odd groups to even groups"""
-        if self.create_cluster == True:
+        if self.create_cluster == "True":
             even_num = self.dbscan_cluster.loc[self.dbscan_cluster["group"] % 2 == 0]
             odd_num = self.dbscan_cluster.loc[self.dbscan_cluster["group"] % 2 == 1]
             odd_num.eval("group = group - 1", inplace=True)
@@ -172,17 +164,40 @@ class ClusterAnalyzer(object):
                            for sub in [mean_lst, std_lst]]  # merge lists alternatively
         return self.column_lst
 
-    def rolling_win_filter(self, x, k):
-        E_dark = np.max(self.dbscan_cluster["frame"]) / x.size  # expected average dark time for every trace
-        x = x.dropna()  # drop NaN
-        rolling_signal = x.rolling(window=5).mean()  # rolling window analysis (Window size?)
-        threshold = rolling_signal.loc[lambda x: x < E_dark/4]  # threshold 1/4 expected average dark time
+    def rolling_win_filter(self, dark, k, temp):
+        """Filters DNA-PAINT signal in DBSCAN cluster for temporal clustering (sticky, beads etc.) using rolling window
+        calculations on dark times.
+        E_dark = expected average dark time for every trace in DBSCAN cluster
+        window = window size (# of events per trace)
+        threshold = 1/4 expected average dark time (can be set optionally)
+        clusters will be removed if >10% of rolling window signal < 1/4 of expected dark times
+        """
+
+        E_dark_homo = np.max(self.dbscan_cluster["frame"]) / dark.size  # expected average dark time for every trace
+        dark = dark.dropna()  # drop NaN
+        rolling_signal = dark.rolling(window=5).mean()  # rolling window analysis
+        rolling_signal = rolling_signal.dropna()
+        threshold = rolling_signal.loc[lambda dark: dark < E_dark_homo/4]  # threshold 1/4 expected average dark time
         if not threshold.empty:
-            if len(threshold) > len(rolling_signal)/5:  # clear if >10% of signal < 1/4 Expected dark time of dataset
-                # plt.plot(rolling_signal, "o")
-                # plt.hlines(y=E_dark, xmin=0, xmax=600000, colors="green")
-                # plt.hlines(y=E_dark/4, xmin=0, xmax=600000, colors="red")
-                # plt.show()
+            if len(threshold) > len(rolling_signal)/5:  # clear if > 10% of signal < 1/4 expected dark time of dataset
+                if show_sticky_traces == "True":  # show sticky traces
+                    fig, (ax1, ax2) = plt.subplots(ncols=2)
+                    ax1.plot(range(len(rolling_signal)), rolling_signal.tolist(), "o")  # plot dark times from rolling window analysis
+                    ax1.set_xlabel('rolling window events')
+                    ax1.set_ylabel('rolling window dark time')
+                    ax1.hlines(y=E_dark_homo, xmin=0, xmax=len(rolling_signal), colors="green")
+                    ax1.text(1, E_dark_homo, r"E_$\tau$_d_homogen", va="top")
+                    ax1.hlines(y=E_dark_homo/4, xmin=0, xmax=len(rolling_signal), colors="red")
+                    ax1.text(1, E_dark_homo/4, r"1/4 $\tau$_d", va="top")
+                    ax1.hlines(y=tau_d_theo, xmin=0, xmax=len(rolling_signal), colors="black")
+                    ax1.text(1, tau_d_theo, r"$\tau$_d_theo", va="top")
+                    ax2.plot(temp["frame"].tolist(), np.ones(len(temp["frame"].tolist())), 'o')  # plot trace
+                    ax2.vlines(temp["frame"].tolist(), ymin=0.8, ymax=1, colors="black")
+                    ax2.set_xlabel('frame')
+                    ax2.set_ylabel('on')
+                    ax2.set_ylim([0.8, 1.2])
+                    ax2.set_yticks([])
+                    plt.show()
                 self.dbscan_cluster = self.dbscan_cluster.drop(self.dbscan_cluster[self.dbscan_cluster['group']
                                                                                    == k].index)  # drop rows
     def calc_clusterprops(self):
@@ -192,8 +207,9 @@ class ClusterAnalyzer(object):
         for i, k in enumerate(self.groups):  # append mean/std data to dataframe
             temp = self.dbscan_cluster.loc[self.dbscan_cluster['group'] == k]
             temp = temp.sort_values(by=['frame'])  # only for oligomers important
-            dark = temp["frame"].diff() - temp["len"]
-            self.rolling_win_filter(dark, k)
+            dark = temp["frame"].diff() - temp["len"]  # dark times between binding events in dbscan cluster
+            if filter_traces == "True":  # apply rolling window filtering on traces if filter_traces == True
+                self.rolling_win_filter(dark, k, temp)
             merged = np.array([[i, j] for i, j in zip(temp.mean(), temp.std())]).ravel()
             arr.append(merged)
             x = dark[~np.isnan(dark)]
@@ -246,7 +262,6 @@ class ClusterAnalyzer(object):
         obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
         obs_temp.main()
         return self.dbscan_filtered
-
 
     def testplot(self, concat_data, i):
         concat_data.hist(column="frame_mean", bins=60)
@@ -375,7 +390,7 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             obj = ClusterAnalyzer(path + "\\" + i, locs, meanframe, stdframe, meandark, stddark,
                                   epsilon, min_sample, filename, frame_time, min_cluster_events, create_cluster)
             obj.load_file()
-            # obj.nearest_neighbors()
+            obj.nearest_neighbors()
             obj.dbscan()
             obj.artificial_cluster()
             centroids = obj.cluster_area()
@@ -384,16 +399,11 @@ def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample
             obj.calc_inverse_darktime()
             cluster_props = obj.filter()
             dbscan_filtered = obj.save_dbscan_file(i)
-            # plt.scatter(x=cluster_props["x_mean"], y=cluster_props["y_mean"], c=cluster_props["area"], cmap="viridis")
-            # plt.show()
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
-
-    # obj.testplot(all_cluster_props, i)
         save_obs = Save(path_results, path, filename, cluster_props, epsilon, min_sample, column_lst, "properties", i)
         save_obs.main()
     save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties_all", i)
     save_obs.main()
-    #SAVE ALLCLUSTERPROPS FILE!!!!!
     return all_cluster_props, centroids
 
 
