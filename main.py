@@ -23,7 +23,7 @@ n_frames = float(config["PARAMETERS"]["n_frames"])
 min_cluster_events = int(config["PARAMETERS"]["min_cluster_events"])
 create_cluster = config["PARAMETERS"]["create_cluster"]
 filter_traces = config["PARAMETERS"]["filter_traces"]
-show_sticky_traces = config["PARAMETERS"]["filter_traces"]
+show_unspecific_traces = config["PARAMETERS"]["show_unspecific_traces"]
 nearest_neighbor_ananlysis = config["PARAMETERS"]["nearest_neighbor_analysis"]
 NN_pts = config["PARAMETERS"]["NN_pts"].split(",")
 k_on = config["PARAMETERS"]["k_on"]
@@ -180,7 +180,7 @@ class ClusterAnalyzer(object):
         threshold = rolling_signal.loc[lambda dark: dark < E_dark_homo/4]  # threshold 1/4 expected average dark time
         if not threshold.empty:
             if len(threshold) > len(rolling_signal)/5:  # clear if > 10% of signal < 1/4 expected dark time of dataset
-                if show_sticky_traces == "True":  # show sticky traces
+                if show_unspecific_traces == "True":  # show sticky traces
                     fig, (ax1, ax2) = plt.subplots(ncols=2)
                     ax1.plot(range(len(rolling_signal)), rolling_signal.tolist(), "o")  # plot dark times from rolling window analysis
                     ax1.set_xlabel('rolling window events')
@@ -191,7 +191,8 @@ class ClusterAnalyzer(object):
                     ax1.text(1, E_dark_homo/4, r"1/4 $\tau$_d", va="top")
                     ax1.hlines(y=tau_d_theo, xmin=0, xmax=len(rolling_signal), colors="black")
                     ax1.text(1, tau_d_theo, r"$\tau$_d_theo", va="top")
-                    ax2.plot(temp["frame"].tolist(), np.ones(len(temp["frame"].tolist())), 'o')  # plot trace
+                    ax2.plot(temp["frame"].tolist(), np.ones(len(temp["frame"].tolist())), 'o')  # plot traces
+                    ax2.set_xlim([0, n_frames])
                     ax2.vlines(temp["frame"].tolist(), ymin=0.8, ymax=1, colors="black")
                     ax2.set_xlabel('frame')
                     ax2.set_ylabel('on')
