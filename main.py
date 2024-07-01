@@ -10,6 +10,7 @@ from scipy.spatial import ConvexHull
 from numba import njit
 from configparser import ConfigParser
 
+
 #  config.ini file
 config = ConfigParser()
 file = "config.ini"
@@ -58,7 +59,8 @@ class ClusterAnalyzer(object):
         frame_time:
         ..."""
 
-    def __init__(self, file_path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, filename, frame_time, min_cluster_events, create_cluster):  # path to data
+    def __init__(self, file_path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, filename,
+                 frame_time, min_cluster_events, create_cluster):  # path to data
         self.file_path = file_path
         self.locs = locs
         self.meanframe = meanframe
@@ -122,7 +124,7 @@ class ClusterAnalyzer(object):
         self.dbscan_cluster = self.data_pd[s.values]  # mask localization file to extract dbscan cluster
         self.groups = np.sort(self.dbscan_cluster["group"].unique())  # cluster groups indices
         # filter dbscan cluster based on min_cluster events
-        counts = self.dbscan_cluster['group'].value_counts() > self.min_cluster_events  # count events/cluster
+        counts = self.dbscan_cluster['group'].value_counts() > self.min_cluster_events  # count events/cluster + filter
         rev_counts = counts[counts == False]  # reverse series
         rev_counts_index = rev_counts.index  # get index
         self.dbscan_cluster = self.dbscan_cluster[~self.dbscan_cluster['group'].isin(rev_counts_index)]  # bool filter
@@ -182,7 +184,8 @@ class ClusterAnalyzer(object):
             if len(threshold) > len(rolling_signal)/5:  # clear if > 10% of signal < 1/4 expected dark time of dataset
                 if show_unspecific_traces == "True":  # show sticky traces
                     fig, (ax1, ax2) = plt.subplots(ncols=2)
-                    ax1.plot(range(len(rolling_signal)), rolling_signal.tolist(), "o")  # plot dark times from rolling window analysis
+                    # plot dark times from rolling window analysis
+                    ax1.plot(range(len(rolling_signal)), rolling_signal.tolist(), "o")
                     ax1.set_xlabel('rolling window events')
                     ax1.set_ylabel('rolling window dark time')
                     ax1.hlines(y=E_dark_homo, xmin=0, xmax=len(rolling_signal), colors="green")
@@ -240,17 +243,21 @@ class ClusterAnalyzer(object):
 
     def filter(self):
         """filter dataset"""
-        # self.cluster_props = self.cluster_props.loc[(self.cluster_props['inverse_dark [s]'] < 0.5)]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['n_events'] > int(self.locs[0])) & (self.cluster_props['n_events'] < int(self.locs[1]))]
+            (self.cluster_props['n_events'] > int(self.locs[0])) &
+            (self.cluster_props['n_events'] < int(self.locs[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['frame_mean'] > int(self.meanframe[0])) & (self.cluster_props['frame_mean'] < int(self.meanframe[1]))]
+            (self.cluster_props['frame_mean'] > int(self.meanframe[0])) &
+            (self.cluster_props['frame_mean'] < int(self.meanframe[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['frame_std'] > int(self.stdframe[0])) & (self.cluster_props['frame_std'] < int(self.stdframe[1]))]
+            (self.cluster_props['frame_std'] > int(self.stdframe[0])) &
+            (self.cluster_props['frame_std'] < int(self.stdframe[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['dark_mean'] > int(self.meandark[0])) & (self.cluster_props['dark_mean'] < int(self.meandark[1]))]
+            (self.cluster_props['dark_mean'] > int(self.meandark[0])) &
+            (self.cluster_props['dark_mean'] < int(self.meandark[1]))]
         self.cluster_props = self.cluster_props.loc[
-            (self.cluster_props['dark_std'] > int(self.stddark[0])) & (self.cluster_props['dark_std'] < int(self.stddark[1]))]
+            (self.cluster_props['dark_std'] > int(self.stddark[0])) &
+            (self.cluster_props['dark_std'] < int(self.stddark[1]))]
         return self.cluster_props
 
     def save_dbscan_file(self, i):
@@ -260,7 +267,8 @@ class ClusterAnalyzer(object):
         self.dbscan_filtered = self.dbscan_cluster.loc[self.dbscan_cluster['group'].isin(self.groups)]
         header = self.dbscan_filtered.head()  # get column name of dbscan_file
         header = list(header)  # list
-        obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header, "cluster", i)
+        obs_temp = Save(path_results, path, filename, self.dbscan_filtered, epsilon, min_sample, header,
+                        "cluster", i)
         obs_temp.main()
         return self.dbscan_filtered
 
@@ -381,29 +389,32 @@ def _calc_mean(dark):
 def _calc_std(dark):
     return np.array(dark.std())
 
-def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, path_results, filename, frame_time, min_cluster_events, create_cluster):
+def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, path_results, filename,
+         frame_time, min_cluster_events, create_cluster):
 
     all_cluster_props = pd.DataFrame() # init emtpy dataframe
+
     for i in os.listdir(path):
         print(i)
         # loop through dir_list and open files
         if i.endswith(".hdf5"):  #== "ROI1.hdf5": #
             obj = ClusterAnalyzer(path + "\\" + i, locs, meanframe, stdframe, meandark, stddark,
                                   epsilon, min_sample, filename, frame_time, min_cluster_events, create_cluster)
-            obj.load_file()
-            obj.nearest_neighbors()
-            obj.dbscan()
-            obj.artificial_cluster()
-            centroids = obj.cluster_area()
+            obj.load_file()  # load files
+            obj.nearest_neighbors()  # NN analysis to determine DBSCAN input
+            obj.dbscan()  # DBSCAN cluster
             column_lst = obj.make_property_columns()
+            centroids = obj.cluster_area()
             obj.calc_clusterprops()
-            obj.calc_inverse_darktime()
             cluster_props = obj.filter()
+            obj.calc_inverse_darktime()
             dbscan_filtered = obj.save_dbscan_file(i)
             all_cluster_props = obj.combine_data(all_cluster_props, cluster_props)  # concat all files
-        save_obs = Save(path_results, path, filename, cluster_props, epsilon, min_sample, column_lst, "properties", i)
+        save_obs = Save(path_results, path, filename, cluster_props, epsilon, min_sample, column_lst,
+                        "properties", i)
         save_obs.main()
-    save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst, "properties_all", i)
+    save_obs = Save(path_results, path, filename, all_cluster_props, epsilon, min_sample, column_lst,
+                    "properties_all", i)
     save_obs.main()
     return all_cluster_props, centroids
 
