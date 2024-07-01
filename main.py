@@ -1,3 +1,16 @@
+"""
+@author. Marius Glogger
+Optical Imaging Competence Centre, FAU Erlangen
+
+Perform DBSCAN analysis on linked .hdf5 files generated with Picasso (@Jungmann group).
+- load multiple files from folder
+- apply DBSCAN analysis
+- Filter DNA-PAINT trajectories
+- Calculate Properties of cluster
+- Save DBSCAN files (open in Picasso render) and assicuated property files
+"""
+
+
 import h5py
 import pandas as pd
 import numpy as np
@@ -50,14 +63,19 @@ e = k_on*c*t
 tau_d_theo = n_frames/e
 
 class ClusterAnalyzer(object):
-    """ loads .hdf5 files from path.
-        :return: lists containing individual dbscan_cluster information.
-        param:
-        min_cluster_events: minimum events per cluster
-        epsilon:
-        min_sample:
-        frame_time:
-        ..."""
+    """ loads .hdf5 files from path numbered in ascending order. path must contain .yaml files identically named as
+        .hdf5 files. Calculates
+        param str file_path: path to folder containing linked .hdf5 files
+        param list locs: min/max # localizations per cluster
+        param list meanframe/stdframe: mean/std of binding event in cluster
+        param list meandark/stddark: mean/std of dark times between binding events in cluster
+        param float/int epsilon/min_sample: DBSCAN distance and density parameter (px & points)
+        param str filename: name of files to be saved
+        param float frame_time: camera integration time in s
+        param int min_cluster_events: minimum events per cluster allowed
+        param bool create_cluster: bool expression (True = create artifical cluster, False = ignore function)
+        return: hdf5-file (all_cluster_props) that contains all cluster properties
+        """
 
     def __init__(self, file_path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, filename,
                  frame_time, min_cluster_events, create_cluster):  # path to data
@@ -75,7 +93,7 @@ class ClusterAnalyzer(object):
         self.create_cluster = create_cluster
 
     def load_file(self):
-        """load .hdf5_file"""
+        """load .hdf5_files"""
         with h5py.File(self.file_path, "r") as locs_file:
             key = list(locs_file.keys())[0]  # get key name
             locs = locs_file[str(key)][...]
@@ -111,9 +129,9 @@ class ClusterAnalyzer(object):
         DBSCAN analysis of dataset
         epsilon: distance parameter
         MinPts: number of points/cluster (usually > 2*Dimension of dataset)
-        larger datasets: use larger MinPts value
-        noisier datasets: choose larger MinPts value
-        epsilon: use nearest neighbor analysis where k_NN = MinPts
+        larger datasets -> use larger MinPts value
+        noisier datasets -> choose larger MinPts value
+        epsilon -> use nearest neighbor analysis where k_NN = MinPts
         """
         db = DBSCAN(eps=self.epsilon, min_samples=self.min_sample).fit(self.data_pd[["x", "y"]].to_numpy())  # dbscan
         labels = db.labels_
@@ -132,7 +150,7 @@ class ClusterAnalyzer(object):
 
 
     def artificial_cluster(self):
-        """generate larger cluster by assinging odd groups to even groups"""
+        """generate larger cluster by assigning odd groups to even groups"""
         if self.create_cluster == "True":
             even_num = self.dbscan_cluster.loc[self.dbscan_cluster["group"] % 2 == 0]
             odd_num = self.dbscan_cluster.loc[self.dbscan_cluster["group"] % 2 == 1]
@@ -141,7 +159,7 @@ class ClusterAnalyzer(object):
             self.groups = np.sort(self.dbscan_cluster["group"].unique())  # update groups list after filtering
 
     def cluster_area(self):
-        """ calc area of clusters and call func to calc cendtroids"""
+        """ calc area and centroids of clusters from convex hull"""
         self.conv_hull_area = []
         self.centroids = []
         #  calculate area (convex hull) of dbscan cluster
@@ -157,8 +175,8 @@ class ClusterAnalyzer(object):
         """calculate centroids of clusters"""
         return np.mean(hull.points[hull.vertices, 0]), np.mean(hull.points[hull.vertices, 1])
 
-    def make_property_columns(self):
-        """create property file that includes mean and std columns"""
+    def get_header_property_file(self):
+        """get list of column header for property file"""
         self.cluster_props_header = self.dbscan_cluster.columns.values.tolist()
         mean_lst = ['{0}_mean'.format(words) for words in self.cluster_props_header]
         std_lst = ['{0}_std'.format(words) for words in self.cluster_props_header]
@@ -171,17 +189,17 @@ class ClusterAnalyzer(object):
         calculations on dark times.
         E_dark = expected average dark time for every trace in DBSCAN cluster
         window = window size (# of events per trace)
+        tau_d_theo = theoretical darktime (E = k_on * c * t)
         threshold = 1/4 expected average dark time (can be set optionally)
         clusters will be removed if >10% of rolling window signal < 1/4 of expected dark times
         """
-
         E_dark_homo = np.max(self.dbscan_cluster["frame"]) / dark.size  # expected average dark time for every trace
         dark = dark.dropna()  # drop NaN
         rolling_signal = dark.rolling(window=5).mean()  # rolling window analysis
         rolling_signal = rolling_signal.dropna()
         threshold = rolling_signal.loc[lambda dark: dark < E_dark_homo/4]  # threshold 1/4 expected average dark time
         if not threshold.empty:
-            if len(threshold) > len(rolling_signal)/5:  # clear if > 10% of signal < 1/4 expected dark time of dataset
+            if len(threshold) > len(rolling_signal)/5:  # clear if > 20% of signal < 1/4 expected dark time of dataset
                 if show_unspecific_traces == "True":  # show sticky traces
                     fig, (ax1, ax2) = plt.subplots(ncols=2)
                     # plot dark times from rolling window analysis
@@ -205,7 +223,8 @@ class ClusterAnalyzer(object):
                 self.dbscan_cluster = self.dbscan_cluster.drop(self.dbscan_cluster[self.dbscan_cluster['group']
                                                                                    == k].index)  # drop rows
     def calc_clusterprops(self):
-        """calculate properties (mean/std, dark_times) for every cluster in dataset"""
+        """calculate properties (mean/std, dark_times) for every cluster in dataset. Filter cluster if filter_traces
+        is set to True in config.ini file. Cluster properties are stored in new dataframe (cluster_props)."""
         dark_mean, dark_std, row, events = [], [], [], []  # preallocate
         arr = []
         for i, k in enumerate(self.groups):  # append mean/std data to dataframe
@@ -232,17 +251,21 @@ class ClusterAnalyzer(object):
 
 
     def calc_mean(self, x):
+        # calls numba njit function to calc mean
         return _calc_mean(x)
 
     def calc_std(self, x):
+        # calls numba njit function to calc std
+
         return _calc_std(x)
 
     def calc_inverse_darktime(self):
+        # calculates the inverse dark time
         self.cluster_props["inverse_dark [s]"] = 1 / (self.cluster_props["dark_mean"] * self.frame_time)
         return self.cluster_props
 
     def filter(self):
-        """filter dataset"""
+        """filter dataset based on user defined parameter in config.ini file."""
         self.cluster_props = self.cluster_props.loc[
             (self.cluster_props['n_events'] > int(self.locs[0])) &
             (self.cluster_props['n_events'] < int(self.locs[1]))]
@@ -261,7 +284,7 @@ class ClusterAnalyzer(object):
         return self.cluster_props
 
     def save_dbscan_file(self, i):
-        """save filtered dbscan file"""
+        """save filtered dbscan file in results folder. DBSCAN files can be opened in Picasso and further analyzed."""
         self.groups = np.sort(self.cluster_props["group_mean"].unique())
         self.groups = self.groups.astype(np.int32)
         self.dbscan_filtered = self.dbscan_cluster.loc[self.dbscan_cluster['group'].isin(self.groups)]
@@ -273,6 +296,7 @@ class ClusterAnalyzer(object):
         return self.dbscan_filtered
 
     def testplot(self, concat_data, i):
+        # plots results (histograms) - currently not activated
         concat_data.hist(column="frame_mean", bins=60)
         concat_data.hist(column="frame_std", bins=20)
         concat_data.hist(column="dark_mean", bins=20)
@@ -282,13 +306,21 @@ class ClusterAnalyzer(object):
         plt.show()
 
     def combine_data(self, all_cluster_props, cluster_props):
-        """concatenate data"""
+        """concatenates data"""
         all_cluster_props = pd.concat([all_cluster_props, cluster_props], axis=0)
         return all_cluster_props
 
 
 class Save(object):
-    """ Saves new .hdf5 files, corresponding .yaml file and .xlsm containing ROI coordinates"""
+    """ Saves new .hdf5 files containing cluster properties & corresponding .yaml files.
+        param str path_results: path to results folder
+        param str path_files: path to folder containing data to be analyzed
+        param str filename: name of new files
+        param dataframe data: df containing analyzed data
+        param float/int epsilon/min_sample: DBSCAN distance and density parameter (px & points)
+        param list column_lst: list containing column names
+        param str appendix: appendix files, e.g. "properties"
+    """
     def __init__(self, path_results, path_files, filename, data, epsilon, min_sample, column_lst, appendix, i):
         self.path_results = path_results
         self.path_files = path_files
@@ -301,7 +333,7 @@ class Save(object):
         self.i = i
 
     def getformats(self):
-        """get column formats"""
+        """get and adapt column formats"""
         formats = ([np.float32] * (len(self.data.columns)))
         formats[0] = np.uint32
         formats[11] = np.uint32
@@ -310,6 +342,7 @@ class Save(object):
         return formats
 
     def save_pd_to_hdf5(self, formats):
+        """transform dataframe to hdf5 and save files in path."""
         data_lst = self.data.values.tolist()  # convert to list of lists
         data_lst = [tuple(x) for x in data_lst]  # convert to list of tuples
         self.fn = self.i.split(".")  # split name
@@ -324,13 +357,12 @@ class Save(object):
                 ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
                 locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
         else:
-
             with h5py.File(os.path.join(self.path_results, str(name)), "w") as locs_file:
                 ds_dt = np.dtype({'names': self.data.columns.values, 'formats': formats})
                 locs_file.create_dataset("locs", data=data_lst, dtype=ds_dt)
 
     def save_yaml(self):
-        """ opens existing yaml file, adds analysis parameters and saves file in new path"""
+        """opens existing yaml file, adds analysis parameters and saves file in new path"""
         name = (str(self.fn[0]) + "_DBSCAN_" + str(self.epsilon) + "_" + str(self.min_sample) +
                 "_" + str(self.appendix) + ".yaml")
         content = []
@@ -358,7 +390,7 @@ class Save(object):
                     _yaml.dump_all(content, outfile)
 
     def yaml_param(self):
-        """ saves analysis parameter in yaml file"""
+        """yaml file context"""
         self.yaml_content = dict(
             frame_time=frame_time,
             min_cluster_events=min_cluster_events,
@@ -377,7 +409,7 @@ class Save(object):
         )
 
     def main(self):
-        """ main file: calls getformats, save_hdf5 and save_yaml"""
+        """ main file: calls getformats, save_pd_to_hdf5 and save_yaml"""
         formats = self.getformats()
         self.save_pd_to_hdf5(formats)
         self.save_yaml()
@@ -391,19 +423,19 @@ def _calc_std(dark):
 
 def main(path, locs, meanframe, stdframe, meandark, stddark, epsilon, min_sample, path_results, filename,
          frame_time, min_cluster_events, create_cluster):
-
-    all_cluster_props = pd.DataFrame() # init emtpy dataframe
-
+    """ main function. Loops through data in filepath, opens data, performs DBSCAN analysis, filters data
+        calculates cluster properties, saves properties and dbscan files in result path."""
+    all_cluster_props = pd.DataFrame()  # init emtpy dataframe
     for i in os.listdir(path):
-        print(i)
+        print(i)  # print name of file
         # loop through dir_list and open files
-        if i.endswith(".hdf5"):  #== "ROI1.hdf5": #
+        if i.endswith(".hdf5"):  # = "ROI1.hdf5":#
             obj = ClusterAnalyzer(path + "\\" + i, locs, meanframe, stdframe, meandark, stddark,
                                   epsilon, min_sample, filename, frame_time, min_cluster_events, create_cluster)
             obj.load_file()  # load files
             obj.nearest_neighbors()  # NN analysis to determine DBSCAN input
             obj.dbscan()  # DBSCAN cluster
-            column_lst = obj.make_property_columns()
+            column_lst = obj.get_header_property_file()
             centroids = obj.cluster_area()
             obj.calc_clusterprops()
             cluster_props = obj.filter()
