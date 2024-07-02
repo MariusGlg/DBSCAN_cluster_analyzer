@@ -11,7 +11,7 @@ The inverse dark time of cluster tracetories are calculated and the cluster prop
 - cluster properties from all files are merged and saved as a new cluster property file
 
 Data preparation: 
-Save Picasso linked files in a seperate folder in ascending order together with corresponding .yaml file (e.g. File1.hdf5 File1.yaml, File2.hdf5 File2.yaml). The script will load all .hdf5 & yaml files in file_path and analysis the datasets. New .hdf5 files that contain analysis results (cluster properties and dbscan_cluster) will be saved individually and as a concatenated version (all_cluster_properties) for further external analysis. 
+Save Picasso linked files in a seperate folder in ascending order together with corresponding .yaml file (e.g. File1.hdf5 File1.yaml, File2.hdf5 File2.yaml). The script will load all .hdf5 & yaml files in file_path and analyse the datasets. New .hdf5 files that contain analysis results (cluster properties and dbscan_cluster) will be saved individually and as a concatenated version (all_cluster_properties) for further external analysis. 
 
 Requirements: python 3.7, os, configparser, h5py, numpy, matplotlib, yaml, numba, , pandas, sklearn, scipy
 
