@@ -195,11 +195,11 @@ class ClusterAnalyzer(object):
         """
         E_dark_homo = np.max(self.dbscan_cluster["frame"]) / dark.size  # expected average dark time for every trace
         dark = dark.dropna()  # drop NaN
-        rolling_signal = dark.rolling(window=5).mean()  # rolling window analysis
+        rolling_signal = dark.rolling(window=10).mean()  # rolling window analysis
         rolling_signal = rolling_signal.dropna()
         threshold = rolling_signal.loc[lambda dark: dark < E_dark_homo/4]  # threshold 1/4 expected average dark time
         if not threshold.empty:
-            if len(threshold) > len(rolling_signal)/5:  # clear if > 20% of signal < 1/4 expected dark time of dataset
+            if len(threshold) > len(rolling_signal)/10:  # clear if > 10% of signal < 1/4 expected dark time of dataset
                 if show_unspecific_traces == "True":  # show sticky traces
                     fig, (ax1, ax2) = plt.subplots(ncols=2)
                     # plot dark times from rolling window analysis
@@ -473,13 +473,3 @@ Cluster_props, centroids = main(path, locs, meanframe, stdframe,
 # plt.show()
 #
 # plt.savefig(path_results + "cluter_analysis.png", dpi=300) #  os.path.dirname(root)
-
-
-
-# with open(os.path.join(path_yaml), 'r') as yaml_file:
-        #     text = _yaml.load_all(yaml_file, _yaml.FullLoader)
-        #     with open(os.path.join(self.path, name), 'w') as outfile:
-        #         for doc in text:
-        #             content.append(doc)
-        #         content.append(self.yaml_content)
-        #         _yaml.dump_all(content, outfile)
